@@ -1,0 +1,125 @@
+Add your design document in here.
+
+What significant data structures have you added and what function do they perform?
+
+What are any significant issues surround managing the data structures and state do 
+they contain?
+
+What data structures are per-process and what structures are shared between processes?
+
+What is the main issues related to transferring data to and from applications?
+
+file.h：
+struct file_descriptor_table：
+            This structure defines an array of file descriptors fd that can be
+            used to index into other data structures (such as the open_file_table below)
+            to retrieve information about a particular file.
+
+struct open_file：
+            This structure represents an open file and contains a pointer to the vnode
+            associated with the file (vn), the file's flags (flags), a reference count (refcount),
+            and the current offset (offset) within the file.
+
+struct open_file_table：
+            This structure defines an array of pointers to open_file structures 
+            (of) that represent the set of open files for a given process. 
+            The oft_lock field is a lock that can be used to synchronize 
+            access to the open file table from multiple threads or processes.
+
+syscall.c:
+case SYS_LSEEK: 
+            due to offset is a 64bits value, and it’s divided into 32bits
+            and store in two registers. Then we use join32to64() to transfer 
+            two 32bits to 64bits. After we got new offset, use split64to32() 
+            to split 64bits to two 32bits and store in two different registers.
+
+file.c:
+init:
+            The open_file_table_init function initializes an instance of the open_file_table structure,
+            allocating memory for it using kmalloc. It then initializes each entry in the of array to NULL,
+            indicating that no files are currently open. It also creates a lock to be used to
+            synchronize access to the open file table.
+
+            The file_descriptor_table_init function initializes the file descriptor table
+            for the current process (curproc). It allocates memory for the file_descriptor_table
+            structure using kmalloc and initializes each entry in the fd array to -1, which is
+            used to indicate that a file descriptor is not currently associated with an open file.
+            The function also sets up the standard input (stdin), standard output (stdout),
+            and standard error (stderr) file descriptors using the stdioe function.
+
+            init function is called by system to run open file table's and file descriptor table's
+            initialize function.
+
+sys_open:
+            open a file with a given name, and returns a file descriptor that can be used in 
+            subsequent read and write system calls. The new_file function is called to create a 
+            new open file and add it to the open file table and file descriptor table.
+
+sys_close:
+            used to close a file with a given file descriptor. It decrements the reference count 
+            of the open file corresponding to the file descriptor, and if the reference count 
+            becomes zero, it removes the open file from the open file table, closes the file, 
+            and frees the memory associated with the open file.
+
+sys_read
+sys_write:
+            The read and write system calls are used to read from and write to a file, respectively. 
+            They take a file descriptor, a buffer to read from or write to, and the number of bytes 
+            to read or write. The read_and_write function is called to perform the actual reading 
+            or writing of data to the file.
+
+sys_lseek:
+            Check is input fd is valid in fd table, and is point to valid file 
+            in file open table. Then we use VOP_ISSEEKABLE() function to check the 
+            file that the vnode point to is seekable.
+            We got 3 situations for WHENCE: SEEK_CUR, SEEK_END, SEEK_SET
+
+            When SEEK_CUR, it’s start from current position. We check is pos + offset 
+            is less than 0 that’s mean the seek position will beyond the file beginning 
+            and  the position that is not in the file. If check is true then return EINVAL. 
+            If not true then we  update new offsect = pos + offset.
+
+            When SEEK_END, it’s start from the end of file. Use VOP_STAT() to get the 
+            size of the file. To check is pos plus file size less than 0 that’s to ensure 
+            seek position will not move beyond file beginning. If it’s true then return 
+            EINVAL, if it’s not true then we update new offset = pos + file size.
+            And because seek positions beyond EOF are legal, so we don’t check the 
+            situation pos > file size.
+
+            When SEEK_SET, it’s start from the beginning of file. We check is pos < 0
+            to ensure seek position will not beyond file beginning. If condition check 
+            pass then update new offset = pos.
+sys_dup2: 
+            we first to check if oldfd and newfd are in valid range. And then check is 
+            oldfd is valid in fd table and refer to valid open file, if not valid then
+            return EBADF. For dup2 function there are few situation.
+            When oldfd is valid and oldfd equal to newfd, then dup2 will do nothing and 
+            return newfd.
+
+help function:
+            The stdioe() function opens a file with the given path and mode 
+            (either read-only or write-only) and sets it as either the standard input 
+            or standard output stream of the current process.
+
+            The new_file() function creates a new file with the given filename, flags, and mode,
+            and adds it to the open file table and the file descriptor table.
+            It also returns the file descriptor for the newly opened file.
+
+            The create_new_file() function opens the file with the given filename and flags and
+            initializes a new open file struct with the file's vnode pointer, offset, flags, and reference count.
+
+            The find_empty_slot() function finds an empty slot in either the open file table 
+            or the file descriptor table, depending on the mode. If no empty slot is found, it returns an error.
+
+            The read_and_write() function is used by both the sys_read and sys_write system calls to read or write
+            data from/to an open file. It first retrieves the open_file object corresponding to the given file descriptor
+            from the current process's file descriptor table (curproc->fdt->fd), and checks that it is a valid file descriptor.
+            If it is, the function acquires the open file table lock (oft_lock) to ensure mutual exclusion,
+            and retrieves the vnode object associated with the file from the open_file object.
+            The function then creates an uio structure to conduct the read or write operation using the vnode object, 
+            depending on the mode parameter (0 for read, 1 for write). The uio structure provides the buffer to which 
+            data will be read or written, the length of the data to be read or written, and the file offset from which 
+            the operation will be performed.
+            The function ensures that the file is opened in the right mode for the operation (read or write), 
+            before conducting the read or write operation. The method returns an error if the mode is wrong.
+            If the mode is valid, the function will read or write using the VOP READ or VOP WRITE functions.
